@@ -1,0 +1,137 @@
+# coding utf-8
+import gradio as gr
+from datetime import datetime
+import os
+
+from fx_utils import CURRENCY_LIST, RATE_STATUS_MESSAGE
+from ui_helpers import (
+    calculate_main,
+    handle_csv_download,
+    update_fields,
+    FONT_STACK
+)
+
+css = f
+link href='httpsfonts.googleapis.comcss2family=Noto+Sans+TCwght@300;400;700&display=swap' rel='stylesheet'
+style
+body, .gradio-container {{
+    font-family {FONT_STACK}, 'Noto Sans TC', sans-serif !important;
+    background linear-gradient(-45deg, #667eea, #764ba2, #f093fb, #f5576c);
+    background-size 400% 400%;
+    animation gradientShift 15s ease infinite;
+    min-height 100vh;
+}}
+@keyframes gradientShift {{
+    0% {{ background-position 0% 50%; }}
+    50% {{ background-position 100% 50%; }}
+    100% {{ background-position 0% 50%; }}
+}}
+.gradio-container {{ background none !important; border none !important; box-shadow none !important; }}
+.glass-card {{
+    background rgba(255, 255, 255, 0.88);
+    backdrop-filter blur(12px);
+    border-radius 1rem;
+    padding 1.5rem;
+    margin-bottom 1.5rem;
+    box-shadow 0 10px 25px rgba(0, 0, 0, 0.08);
+}}
+.hero-glass {{
+    background rgba(255, 255, 255, 0.1); backdrop-filter blur(15px);
+    border-radius 1rem; padding 1.5rem; max-width 50rem; margin 0 auto 1.5rem auto;
+    text-align center; color white; border 1px solid rgba(255,255,255,0.2);
+}}
+.hero-glass h1 {{ font-size 2.5rem; font-weight 700; margin-bottom 0.5rem; }}
+.btn-gradient {{
+    background linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important; color white !important;
+    border none !important;
+}}
+style
+
+
+def create_ui()
+    with gr.Blocks(theme=gr.themes.Soft(), title=AI 投資終值預估工具, css=css) as demo
+        df_for_csv = gr.State(None)
+        gr.HTML(value=fstyle{css}style)
+
+        with gr.Row()
+            gr.Markdown(
+            div class=hero-glass
+                h1AI 投資計算機h1
+                p規劃您的未來，實現您的夢想。p
+            div
+            )
+
+        with gr.Row(elem_classes=[glass-card])
+             with gr.Column()
+                 gr.Markdown(f📅 日期 {datetime.now().strftime('%Y-%m-%d')})
+                 gr.Markdown(f💹 匯率 {RATE_STATUS_MESSAGE})
+
+        with gr.Group(elem_classes=glass-card)
+            mode = gr.Radio([正向計算, 單次投入, 目標反推], label=計算模式, value=正向計算)
+
+        with gr.Group(elem_classes=glass-card)
+            with gr.Row()
+                with gr.Column()
+                     initial = gr.Number(label=初始投入, value=50000)
+                     periodic = gr.Number(label=定期投入, value=2000)
+                     years = gr.Number(label=投資期間 (年), value=15)
+                     target_amount = gr.Number(label=目標金額, value=1000000, visible=False)
+                     rate = gr.Slider(0.1, 30, value=7.5, label=年化報酬率 (%))
+                     inflation_rate_percent = gr.Slider(0, 15, value=2.0, label=預期年通膨率 (%))
+                
+                with gr.Column()
+                    currency_codes = [code for code, _, _ in CURRENCY_LIST]
+                    base_ccy = gr.Dropdown(currency_codes, value=TWD, label=本金幣別)
+                    output_ccy = gr.Dropdown(currency_codes, value=TWD, label=顯示幣別)
+                    invest_freq = gr.Dropdown([每年, 每月, 每季, 每週, 自訂], value=每月, label=投入週期)
+                    invest_custom_months = gr.Number(label=自訂週期(月), value=1, visible=False)
+                    compound_freq = gr.Dropdown([每年, 每月, 每季, 每週], value=每月, label=複利週期)
+                    reinvest = gr.Dropdown([複利再投入, 單利不再投入], value=複利再投入, label=收益處理)
+                    run_sensitivity = gr.Checkbox(label=執行敏感度分析, value=True)
+
+        btn = gr.Button(🚀 計算, variant=primary, elem_classes=btn-gradient)
+
+        with gr.Blocks(visible=False) as results_block
+            with gr.Group(elem_classes=glass-card)
+                output_html = gr.HTML(label=結果)
+                with gr.Tabs()
+                    with gr.TabItem(資產圖表)
+                         output_plot = gr.Plot()
+                    with gr.TabItem(數據表)
+                         output_df = gr.DataFrame()
+                         download_btn = gr.Button(下載 CSV)
+                         output_file = gr.File(visible=True)
+
+        # 事件綁定
+        def mode_change_ui(mode_choice, current_invest_freq)
+             updates = update_fields(mode_choice, current_invest_freq)
+             # update_fields returns 10 values
+             return updates[0], updates[1], updates[2], updates[3], updates[4], updates[5], updates[6], updates[7], updates[8], updates[9]
+
+        mode.change(
+            fn=mode_change_ui,
+            inputs=[mode, invest_freq],
+            outputs=[initial, periodic, years, target_amount, invest_freq, invest_custom_months, compound_freq, reinvest, inflation_rate_percent, run_sensitivity]
+        )
+
+        invest_freq.change(fn=lambda f gr.update(visible=(f == 自訂)), inputs=invest_freq, outputs=invest_custom_months)
+
+        btn.click(
+            fn=calculate_main,
+            inputs=[mode, initial, periodic, years, target_amount, rate, base_ccy, output_ccy, invest_freq, invest_custom_months, compound_freq, reinvest, inflation_rate_percent, run_sensitivity],
+            outputs=[results_block, output_html, output_plot, output_df, download_btn, df_for_csv]
+        )
+
+        download_btn.click(
+            fn=handle_csv_download,
+            inputs=[df_for_csv, mode, base_ccy, years, rate],
+            outputs=output_file
+        )
+    return demo
+
+if __name__ == __main__
+    # 這裡很重要：Render 會透過環境變數 PORT 告訴我們要用哪個 Port
+    port = int(os.environ.get(PORT, 7860))
+    demo = create_ui()
+    # server_name=0.0.0.0 允許外部連線
+    demo.launch(server_name=0.0.0.0, server_port=port)

@@ -1,0 +1,160 @@
+# coding: utf-8
+import numpy as np
+import pandas as pd
+import math
+from typing import List, Tuple, Dict, Optional
+
+def get_period_params(years: float, rate: float,
+                      invest_freq: str, invest_custom_months: int,
+                      compound_freq: str) -> Tuple[float, float, float, int]:
+    r_annual: float = float(rate) / 100
+    invest_freq_map: Dict[str, int] = {"每年": 1, "每月": 12, "每季": 4, "每週": 52}
+    compound_map: Dict[str, int] = {"每年": 1, "每月": 12, "每季": 4, "每週": 52}
+
+    invest_periods_per_year: float
+    if invest_freq == "自訂":
+        custom_months = int(invest_custom_months) if invest_custom_months and invest_custom_months > 0 else 1
+        invest_periods_per_year = 12 / custom_months
+    else:
+        invest_periods_per_year = invest_freq_map.get(invest_freq, 12)
+
+    compound_per_year: int = compound_map.get(compound_freq, 12)
+    
+    r_period: float
+    if r_annual == 0:
+        r_period = 0.0
+    else:
+        try:
+            r_period = (1 + r_annual) ** (1 / compound_per_year) - 1
+        except ZeroDivisionError:
+            print("警告：每年複利次數為 0，週期利率設為 0。")
+            r_period = 0.0
+    
+    if abs(r_period) < 1e-12:
+        r_period = 0.0
+        
+    return r_annual, r_period, invest_periods_per_year, compound_per_year
+
+def get_inflation_adjustment_factor(years: float, inflation_rate: float) -> float:
+    if inflation_rate < -0.99:
+        print("警告：通膨率過低，可能導致計算錯誤。")
+        inflation_rate = 0.0
+    if years < 0:
+        years = 0
+    try:
+        factor = 1.0 / ((1.0 + inflation_rate) ** years)
+        return factor
+    except Exception as e:
+        print(f"錯誤：計算通膨調整因子時出錯: {e}")
+        return 1.0
+
+def calculate_fv(initial: float, periodic: float, years: float,
+                 r_period: float, invest_periods_per_year: float, compound_per_year: int,
+                 reinvest: str,
+                 inflation_rate_annual: float = 0.0) -> Tuple[float, float, float, Optional[pd.DataFrame]]:
+    
+    if years <= 0:
+        df_empty = pd.DataFrame(columns=[
+            '年數', '總投入本金', '當期投入', '當期名目利息', '複利名目終值', '單利名目終值',
+            '複利實質終值', '單利實質終值'
+        ])
+        return initial, initial, 0, df_empty
+
+    max_years_ceil = max(1, math.ceil(years))
+    timeline_years = np.arange(1, max_years_ceil + 1, 1)
+    if not np.isclose(years, max_years_ceil):
+        timeline_years = np.sort(np.unique(np.append(timeline_years, years)))
+    elif years not in timeline_years:
+        timeline_years = np.append(timeline_years, years)
+
+    data: List[Dict] = []
+    r_annual_simple = r_period * compound_per_year
+    last_y = 0.0
+    last_total_invested = initial
+    last_fv_compound = initial
+    last_fv_simple = initial
+
+    print(f"開始計算 FV，總年期: {years}, 複利週期利率: {r_period:.6f}, 通膨率: {inflation_rate_annual:.4f}")
+    
+    for y in timeline_years:
+        n_compound_total_at_y = y * compound_per_year
+        n_periods_invested_at_y = y * invest_periods_per_year
+
+        fv_initial_compound = initial * ((1 + r_period) ** n_compound_total_at_y)
+        fv_initial_simple = initial * (1 + r_annual_simple * y)
+
+        fv_periodic_compound = 0.0
+        fv_periodic_simple = 0.0
+        if periodic > 0 and invest_periods_per_year > 0:
+            invest_interval_in_compound_periods = compound_per_year / invest_periods_per_year
+            num_actual_periods = math.floor(n_periods_invested_at_y)
+
+            for i in range(num_actual_periods + 1):
+                if i >= n_periods_invested_at_y: break
+                
+                num_compound_periods_for_i = n_compound_total_at_y - i * invest_interval_in_compound_periods
+                if num_compound_periods_for_i < 0: continue
+                fv_periodic_compound += periodic * ((1 + r_period) ** num_compound_periods_for_i)
+
+                simple_interest_years_for_i = y - (i / invest_periods_per_year)
+                if simple_interest_years_for_i < 0: simple_interest_years_for_i = 0
+                fv_periodic_simple += periodic * (1 + r_annual_simple * simple_interest_years_for_i)
+
+        total_invested_at_y = initial + periodic * n_periods_invested_at_y
+        fv_compound_at_y = fv_initial_compound + fv_periodic_compound
+        fv_simple_at_y = fv_initial_simple + fv_periodic_simple
+
+        current_period_duration = y - last_y
+        current_period_investment = total_invested_at_y - last_total_invested
+        current_compound_interest = fv_compound_at_y - last_fv_compound - current_period_investment
+        current_simple_interest = fv_simple_at_y - last_fv_simple - current_period_investment
+        current_nominal_interest = current_compound_interest if reinvest == '複利再投入' else current_simple_interest
+
+        inflation_factor = get_inflation_adjustment_factor(y, inflation_rate_annual)
+        fv_compound_real_at_y = fv_compound_at_y * inflation_factor
+        fv_simple_real_at_y = fv_simple_at_y * inflation_factor
+
+        data.append({
+            "年數": y,
+            "總投入本金": total_invested_at_y,
+            "當期投入": current_period_investment,
+            "當期名目利息": current_nominal_interest,
+            "複利名目終值": fv_compound_at_y,
+            "單利名目終值": fv_simple_at_y,
+            "複利實質終值": fv_compound_real_at_y,
+            "單利實質終值": fv_simple_real_at_y
+        })
+
+        last_y = y
+        last_total_invested = total_invested_at_y
+        last_fv_compound = fv_compound_at_y
+        last_fv_simple = fv_simple_at_y
+
+    try:
+        df = pd.DataFrame(data)
+        df = df[[
+            '年數', '總投入本金', '當期投入', '當期名目利息', '複利名目終值', '單利名目終值',
+            '複利實質終值', '單利實質終值'
+        ]]
+    except Exception as e:
+        print(f"錯誤：創建 DataFrame 失敗: {e}")
+        return initial, initial, 0, None
+
+    if df.empty:
+        final_nominal_compound = initial
+        final_nominal_simple = initial
+        final_invested = initial
+    else:
+        final_row = df.iloc[-1]
+        final_nominal_compound = final_row["複利名目終值"]
+        final_nominal_simple = final_row["單利名目終值"]
+        final_invested = final_row["總投入本金"]
+
+    final_nominal = final_nominal_compound if reinvest == "複利再投入" else final_nominal_simple
+    total_nominal_gain = final_nominal - final_invested
+
+    return final_nominal, final_invested, total_nominal_gain, df
+
+def rule_of_72(rate):
+    if rate <= 0: return None
+    return 72 / rate

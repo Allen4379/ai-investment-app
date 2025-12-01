@@ -1,0 +1,96 @@
+# coding: utf-8
+import requests
+
+# --- 1. 貨幣與匯率數據 ---
+DEFAULT_CURRENCY_LIST = [
+    ("TWD", "新台幣 TWD", 0.0325),
+    ("USD", "美元 USD", 1.0000),
+    ("JPY", "日圓 JPY", 0.0068),
+    ("EUR", "歐元 EUR", 1.0750),
+    ("CNY", "人民幣 CNY", 0.1380),
+    ("HKD", "港幣 HKD", 0.1280),
+    ("GBP", "英鎊 GBP", 1.2550),
+    ("AUD", "澳幣 AUD", 0.6450),
+    ("CAD", "加幣 CAD", 0.7350),
+    ("SGD", "新幣 SGD", 0.7420),
+]
+
+CURRENCY_LIST = []
+CURRENCY_TO_USD = {}
+CURRENCY_LABELS = {}
+CURRENCY_UNIT = {
+    "TWD": "元", "USD": "美元", "JPY": "日圓", "EUR": "歐元", "CNY": "人民幣",
+    "HKD": "港幣", "GBP": "英鎊", "AUD": "澳幣", "CAD": "加幣", "SGD": "新幣"
+}
+
+def fetch_and_update_rates():
+    global CURRENCY_LIST, CURRENCY_TO_USD, CURRENCY_LABELS
+    api_url = "https://open.er-api.com/v6/latest/USD"
+    timeout_seconds = 5
+    
+    try:
+        print(f"正在從 {api_url} 獲取匯率...")
+        response = requests.get(api_url, timeout=timeout_seconds)
+        response.raise_for_status()
+        data = response.json()
+        rates = data.get("rates")
+
+        if not rates:
+            raise ValueError("API 回應格式錯誤：缺少 'rates' 鍵")
+
+        print("API 請求成功，正在處理匯率數據...")
+        CURRENCY_LIST.clear()
+        CURRENCY_TO_USD.clear()
+        CURRENCY_LABELS.clear()
+
+        for code, label, default_rate in DEFAULT_CURRENCY_LIST:
+            rate_from_api = rates.get(code)
+            if rate_from_api:
+                current_rate = float(rate_from_api)
+                CURRENCY_LIST.append((code, label, current_rate))
+                CURRENCY_TO_USD[code] = current_rate
+                CURRENCY_LABELS[code] = label
+            else:
+                print(f"警告：API 未返回 {code} 的匯率，將使用預設值 {default_rate}。")
+                CURRENCY_LIST.append((code, label, default_rate))
+                CURRENCY_TO_USD[code] = default_rate
+                CURRENCY_LABELS[code] = label
+
+        update_time_utc = data.get('time_last_update_utc', '無法獲取')
+        print(f"--- 匯率更新成功 (資料時間: {update_time_utc}) ---")
+        return f"✅ 已從網路更新即時匯率<br>(資料時間 (UTC): {update_time_utc})"
+
+    except Exception as e:
+        print(f"!!! 獲取即時匯率失敗: {e} !!!")
+        print("--- 將使用內建的預設匯率 ---")
+        CURRENCY_LIST[:] = DEFAULT_CURRENCY_LIST
+        CURRENCY_TO_USD.clear()
+        CURRENCY_TO_USD.update({c: rate for c, _, rate in DEFAULT_CURRENCY_LIST})
+        CURRENCY_LABELS.clear()
+        CURRENCY_LABELS.update({c: label for c, label, _ in DEFAULT_CURRENCY_LIST})
+        return "<span style='color:orange; font-weight:bold;'>⚠️ 網路匯率獲取失敗<br>(正使用內建預設匯率)</span>"
+
+print("初始化匯率模組，嘗試獲取匯率...")
+RATE_STATUS_MESSAGE = fetch_and_update_rates()
+print(f"匯率初始化完成。狀態: {'成功' if '✅' in RATE_STATUS_MESSAGE else '失敗'}")
+
+def get_fx_rate(base_ccy, output_ccy):
+    if base_ccy == output_ccy:
+        return 1.0
+    
+    if not CURRENCY_TO_USD:
+        print("警告：匯率字典為空，嘗試重新獲取...")
+        fetch_and_update_rates()
+        if not CURRENCY_TO_USD:
+            print("錯誤：無法獲取匯率數據，無法計算匯率。")
+            return 0.0
+
+    usd_per_base_unit = CURRENCY_TO_USD.get(base_ccy, 0.0)
+    usd_per_output_unit = CURRENCY_TO_USD.get(output_ccy, 0.0)
+
+    if usd_per_output_unit == 0.0:
+        print(f"錯誤：輸出貨幣 {output_ccy} 的美元匯率為 0 或無效，無法計算匯率。")
+        return 0.0
+
+    calculated_rate = usd_per_base_unit / usd_per_output_unit
+    return calculated_rate
